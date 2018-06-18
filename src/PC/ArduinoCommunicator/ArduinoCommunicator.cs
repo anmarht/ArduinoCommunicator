@@ -53,7 +53,14 @@ namespace ArduinoCommunicator
         public void SendToArduino(Dictionary<string, object> dictionary)
         {
             var message = CreateToArduinoMessage(dictionary);
-            _serialPort.Write(message);
+            try
+            {
+                _serialPort.Write(message);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine(ex.Message);
+            }
         }
 
         public Dictionary<string, object> GetItems(string message)

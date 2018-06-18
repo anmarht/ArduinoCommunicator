@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading;
 
 namespace CSharpTestApp
 {
@@ -16,7 +17,19 @@ namespace CSharpTestApp
 
             ac.StartEngine("COM5", 115200);
 
-            Console.WriteLine("Waiting for messages...");
+            Console.WriteLine("Waiting for messages while sending a message every 3 seconds...");
+
+            while (true)
+            {
+                var msg = new Dictionary<string, object>
+                {
+                    {"SetServo", "22" }
+                };
+
+                ac.SendToArduino(msg);
+
+                Thread.Sleep(3000);
+            }
 
             Console.ReadKey();
 
@@ -26,15 +39,18 @@ namespace CSharpTestApp
         {
             Console.WriteLine("Received from Arduion:");
 
+            if (message == null)
+                return;
+
             var msgs = message.ToList();
-                        
+
             for (var i = 0; i < message.Count; i++)
             {
                 var name = msgs[i].Key;
                 var value = msgs[i].Value;
 
                 Console.WriteLine($"Key = {name}, Value = {value.ToString()}");
-            }            
+            }
         }
     }
 }
