@@ -23,6 +23,7 @@ using System.Text;
 using System.Linq;
 using System.IO.Ports;
 using System.Threading.Tasks;
+using System.Threading;
 
 namespace ArduinoCommunicator
 {
@@ -33,8 +34,13 @@ namespace ArduinoCommunicator
         private Task _engine;
         private bool _engineRunning;
         private SerialPort _serialPort;
+        private string _incoming;
+        private object _lockObject;
+        public int _badFormatCount;
+        private Thread _engineThread;
+        private Queue<string> _sendQueue;
 
-        public delegate void MessageFromArduinoEventHandler(Dictionary<string, object> message);
+        public delegate void MessageFromArduinoEventHandler(List<Dictionary<string, object>> messages);
 
         public event MessageFromArduinoEventHandler messageFromArduinoEventHandlerEvent;
 
@@ -42,6 +48,9 @@ namespace ArduinoCommunicator
         {
             _objectDelimiter = objectDelimiter;
             _propertiesDelimiter = propertiesDelimiter;
+            _lockObject = new object();
+            _badFormatCount = 0;
+            _sendQueue = new Queue<string>();
         }
 
         public string CreateToArduinoMessage(Dictionary<string, object> dictionary)
@@ -52,86 +61,134 @@ namespace ArduinoCommunicator
 
         public void SendToArduino(Dictionary<string, object> dictionary)
         {
-            var message = CreateToArduinoMessage(dictionary);
-            try
-            {
-                _serialPort.Write(message);
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine(ex.Message);
-            }
+            //var message = CreateToArduinoMessage(dictionary);
+            //_serialPort.WriteLine(message);
+            _sendQueue.Enqueue(CreateToArduinoMessage(dictionary));          
         }
 
-        public Dictionary<string, object> GetItems(string message)
+        public new List<Dictionary<string, object>> GetItems(string message)
         {
-            var result = new Dictionary<string, object>();
+            var lines = message.Split(new[] { Environment.NewLine }, StringSplitOptions.None);
 
-            var objects = message.Split(_objectDelimiter);
-
-            for (var i = 0; i < objects.Length; i++)
+            var results = new List<Dictionary<string, object>>();
+            for (var j = 0; j < lines.Length; j++)
             {
-                var properties = objects[i].Split(_propertiesDelimiter);
+                var result = new Dictionary<string, object>();
 
-                if (properties.Length < 3)
-                    return null;
+                var objects = lines[j].Split(_objectDelimiter);
 
-                var type = properties[0];
-                var name = properties[1];
-                object value = null;
-
-                switch (type)
+                try
                 {
-                    case "i":
-                        value = Convert.ToInt16(properties[2]);
-                        break;
-                    case "u":
-                        value = Convert.ToUInt16(properties[2]);
-                        break;
-                    case "l":
-                        value = Convert.ToInt32(properties[2]);
-                        break;
-                    case "ul":
-                        value = Convert.ToUInt32(properties[2]);
-                        break;
-                    case "s":
-                        value = properties[2];
-                        break;
+                    for (var i = 0; i < objects.Length; i++)
+                    {
+                        var properties = objects[i].Split(_propertiesDelimiter);
+
+                        if (properties.Length < 3)
+                            continue;
+
+                        var type = properties[0];
+                        var name = properties[1];
+                        object value = null;
+
+                        switch (type)
+                        {
+                            case "i":
+                                value = Convert.ToInt16(properties[2]);
+                                break;
+                            case "u":
+                                value = Convert.ToUInt16(properties[2]);
+                                break;
+                            case "l":
+                                value = Convert.ToInt32(properties[2]);
+                                break;
+                            case "ul":
+                                value = Convert.ToUInt32(properties[2]);
+                                break;
+                            case "s":
+                                value = properties[2];
+                                break;
+                        }
+
+                        result.Add(name, value);
+                    }
                 }
-
-                result.Add(name, value);
+                catch (Exception ex)
+                {
+                    _badFormatCount++;
+                }
+                results.Add(result);
             }
-            return result;
-        }
 
-        public void StartEngine(string comPort, int baudRate)
-        {
-            if (_engine == null || _engine.Status == TaskStatus.Canceled)
+            if (results == null)
             {
-                _engineRunning = true;
-                _engine = Task.Factory.StartNew(() => ListenerEngine(comPort, baudRate));
+                int g;
+                g = 1;
             }
+            return results;
         }
 
-        public void StopEngine()
+        public void Start(string comPort, int baudRate)
         {
-            _engineRunning = false;
-        }
-
-        public void ListenerEngine(string comPort, int baudRate)
-        {
+            _engineRunning = true;
             _serialPort = new SerialPort(comPort, baudRate);
+            // _serialPort.DataReceived += _serialPort_DataReceived;
             _serialPort.Open();
+            _engineThread = new Thread(Engine);
+            _engineThread.Start();
+        }
+
+        public void Engine()
+        {
             while (_engineRunning)
             {
                 var line = _serialPort.ReadLine();
                 var items = GetItems(line);
 
-                if (messageFromArduinoEventHandlerEvent != null)
+                if (items != null && messageFromArduinoEventHandlerEvent != null)
                     messageFromArduinoEventHandlerEvent(items);
 
+                if (_sendQueue.Count > 0)
+                    for (var i = 0; i < _sendQueue.Count; i++)
+                    {
+                        var message = _sendQueue.Dequeue();
+                        _serialPort.WriteLine(message+Environment.NewLine);
+                    }
             }
+        }
+
+        public void Stop()
+        {
+            _engineRunning = false;
+            _engineThread.Join();
             _serialPort.Close();
+        }
+
+        private void _serialPort_DataReceived(object sender, SerialDataReceivedEventArgs e)
+        {
+            lock (_lockObject)
+            {
+                var newData = _serialPort.ReadExisting();
+
+                _incoming += newData;
+                var lastNewLine = _incoming.LastIndexOf(Environment.NewLine);
+                if (lastNewLine < 0)
+                    return;
+                var lines = _incoming.Substring(0, lastNewLine + 2);
+                _incoming = _incoming.Substring(lastNewLine + 2);
+
+                // Console.Write(lines);
+
+                var items = GetItems(lines);
+
+                if (items == null)
+                {
+                    int g;
+                    g = 1;
+                }
+
+                if (messageFromArduinoEventHandlerEvent != null)
+                    messageFromArduinoEventHandlerEvent(items);
+            }
         }
     }
 }

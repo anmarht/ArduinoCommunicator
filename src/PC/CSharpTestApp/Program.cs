@@ -2,11 +2,13 @@
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
+using System.Threading.Tasks;
 
 namespace CSharpTestApp
 {
     class Program
     {
+        static int blink = 0;
         static void Main(string[] args)
         {
             Console.WriteLine("ArduinoCommunicator Test");
@@ -15,41 +17,54 @@ namespace CSharpTestApp
 
             ac.messageFromArduinoEventHandlerEvent += Ac_messageFromArduinoEventHandlerEvent;
 
-            ac.StartEngine("COM5", 115200);
+            ac.Start("COM5", 115200);
 
             Console.WriteLine("Waiting for messages while sending a message every 3 seconds...");
 
-            while (true)
+            Task.Run(() =>
             {
-                var msg = new Dictionary<string, object>
+                while (true)
                 {
-                    {"SetServo", "22" }
-                };
+                    if (blink == 0)
+                        blink = 1;
+                    else
+                        blink = 0;
+                    var msg = new Dictionary<string, object>
+                    {
+                        {"SetServo", "22" },
+                        {"blink", blink.ToString() }
+                    };
 
-                ac.SendToArduino(msg);
+                    ac.SendToArduino(msg);
 
-                Thread.Sleep(3000);
-            }
-
+                    Thread.Sleep(300);
+                }
+            });
             Console.ReadKey();
 
         }
 
-        private static void Ac_messageFromArduinoEventHandlerEvent(Dictionary<string, object> message)
+        private static void Ac_messageFromArduinoEventHandlerEvent(List<Dictionary<string, object>> messages)
         {
-            Console.WriteLine("Received from Arduion:");
-
-            if (message == null)
+            if (messages == null)
                 return;
 
-            var msgs = message.ToList();
-
-            for (var i = 0; i < message.Count; i++)
+            for (var i = 0; i < messages.Count; i++)
             {
-                var name = msgs[i].Key;
-                var value = msgs[i].Value;
+                var message = messages[i];
+                var msgs = message.ToList();
 
-                Console.WriteLine($"Key = {name}, Value = {value.ToString()}");
+                if (msgs.Count == 0)
+                    continue;
+
+                for (var j = 0; j < msgs.Count; j++)
+                {
+                    var name = msgs[j].Key;
+                    var value = msgs[j].Value;
+
+                    Console.Write($"{{{name} = {value?.ToString()}}} ");
+                }
+                Console.WriteLine();
             }
         }
     }
